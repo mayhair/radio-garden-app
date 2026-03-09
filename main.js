@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, Tray, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const DiscordRPC = require('discord-rpc');
@@ -702,6 +702,11 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('before-input-event', function(event, input) {
+    if (input.type === 'keyDown' && input.key === 'r' && input.control && !input.alt && !input.meta) {
+      event.preventDefault();
+      mainWindow.webContents.reload();
+      return;
+    }
     if (
       input.type === 'keyDown' && input.key === 'f' &&
       !input.control && !input.alt && !input.meta && !input.shift
@@ -814,7 +819,6 @@ app.whenReady().then(function() {
   );
 
   createWindow();
-  globalShortcut.register('Control+R', function() { mainWindow.reload(); });
 
   tray = new Tray(path.join(__dirname, 'icon.ico'));
   tray.setToolTip('Radio Garden');

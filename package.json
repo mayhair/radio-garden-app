@@ -1,6 +1,6 @@
 {
   "name": "radiogardenapp",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Minimal Radio Garden desktop app",
   "main": "main.js",
   "scripts": {
