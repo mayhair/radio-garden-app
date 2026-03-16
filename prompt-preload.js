@@ -37,7 +37,7 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "chillzaurus",
+      "owner": "mayhair",
       "repo": "radio-garden-app"
     },
     "nsis": {

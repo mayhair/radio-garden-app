@@ -280,6 +280,7 @@ function showAbout() {
     '    </div>',
     '    <button class="close-btn" id="close-btn">Close</button>',
     '    <div class="made-by">made by <a id="gh-link">unugeorge</a> &nbsp;&middot;&nbsp; v' + app.getVersion() + ' &nbsp;&middot;&nbsp; 2026</div>',
+    '    <div class="made-by">Linux Fix by <a id="mayhair-link">mayhair</a></div>',
     '    <p class="disclaimer">This is an independent project and is not affiliated with, endorsed by, or associated with Radio Garden.</p>',
     '  </div>',
     '</div>',
@@ -292,6 +293,9 @@ function showAbout() {
     '  });',
     '  document.getElementById("gh-link").addEventListener("click", function() {',
     '    require("electron").shell.openExternal("https://github.com/chillzaurus/radio-garden-app/");',
+    '  });',
+    '  document.getElementById("mayhair-link").addEventListener("click", function() {',
+    '    require("electron").shell.openExternal("https://github.com/mayhair/radio-garden-app");',
     '  });',
     '<\/script>',
     '</body></html>'
@@ -877,7 +881,7 @@ app.whenReady().then(function() {
     updater.autoInstallOnAppQuit = true;
     updater.setFeedURL({
       provider: 'github',
-      owner: 'chillzaurus',
+      owner: 'mayhair',
       repo: 'radio-garden-app'
     });
     updater.checkForUpdatesAndNotify();
