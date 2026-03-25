@@ -3,9 +3,10 @@
   window.__foldersInjected = true;
 
   var ipc = window.__rgFolders;
-  var state = { folders: [], assignments: {}, collapsed: {}, order: [], sortMode: 'manual', folderColors: {} };
+  var state = { folders: [], assignments: {}, collapsed: {}, order: [], sortMode: 'manual', folderColors: {}, compact: false };
   var activeKey = null;
   var dragKey = null;
+  var pauseObserver = false;
   var needsPin = false; // set true when station changes, cleared after scroll
   var lastScrolledKey = null; // track last key we scrolled to
 
@@ -16,6 +17,7 @@
     state.collapsed = data.collapsed || {};
     state.order = data.order || [];
     state.sortMode = data.sortMode || 'manual';
+    state.compact = data.compact || false;
     state.folderColors = data.folderColors || {};
   }
   function saveState() {
@@ -25,15 +27,16 @@
       collapsed: state.collapsed,
       order: state.order,
       sortMode: state.sortMode,
+      compact: state.compact,
       folderColors: state.folderColors
     });
   }
 
   function getStations() {
-    var rows = Array.from(document.querySelectorAll('[class*=_link_1drg2]')).reverse();
+    var rows = Array.from(document.querySelectorAll('[class*=_link_][role="button"]')).reverse();
     return rows.map(function(el) {
-      var nameEl = el.querySelector('[class*=_title_1drg2]');
-      var cityEl = el.querySelector('[class*=_subtitle_1drg2]');
+      var nameEl = el.querySelector('[class*=_title_][dir="auto"]');
+      var cityEl = el.querySelector('[class*=_subtitle_][dir="auto"]');
       var name = nameEl ? nameEl.innerText.trim() : '';
       var city = cityEl ? cityEl.innerText.trim() : '';
       return { el: el, name: name, city: city, key: name + '|' + city };
@@ -46,7 +49,7 @@
     '.__fov-addfolder { white-space:nowrap; cursor:pointer; font-family:inherit; font-size:12px; font-weight:500; color:#fff; transition:color 0.15s; background:transparent; border:none; padding:0; }',
     '.__fov-addfolder:hover { color:#00c864; }',
     '.__fov-top { display:flex; flex-direction:column; flex-shrink:0; }',
-    '.__fov-search-wrap { position:relative; flex-shrink:0; background:#222; border-bottom:1px solid #2f2f2f; }',
+    '.__fov-search-wrap { position:relative; flex-shrink:0; background:#222; border-bottom:1px solid #2f2f2f; z-index:2; }',
     '.__fov-search { background:transparent; border:none; color:#ddd; font-size:13px; font-family:inherit; padding:7px 32px 7px 12px; outline:none; width:100%; box-sizing:border-box; }',
     '.__fov-search::placeholder { color:#444; }',
     '.__fov-search-clear { position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:#555; font-size:14px; cursor:pointer; padding:2px 4px; line-height:1; display:none; }',
@@ -78,6 +81,13 @@
     '.__fov-folder-del:hover { color:#e05555; }',
     '.__fov-folder-stations { background:#232323; }',
     '.__fov-station { display:flex; align-items:center; padding:10px 12px 10px 28px; cursor:pointer; gap:8px; border-top:1px solid rgba(255,255,255,0.05); }',
+    '.__fov.compact .__fov-station { padding-top:5px; padding-bottom:5px; }',
+    '.__fov.compact .__fov-station-city { display:none; }',
+    '.__fov.compact .__fov-station-name { font-size:13px; }',
+    '.__fov.compact .__fov-folder-header { padding:6px 10px; }',
+    '.__fov.compact .__fov-folder-name-input { font-size:12px; }',
+    '.__fov.compact .__fov-folder { margin-bottom:2px; }',
+
     '.__fov-station:hover { background:#2a2a2a; }',
     '.__fov-station-info { flex:1; min-width:0; }',
     '.__fov-station-name { font-size:16px; color:#e0e0e0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }',
@@ -107,12 +117,6 @@
   ].join('\n');
   document.head.appendChild(style);
 
-  // Hide Edit button and lock overflow
-  var hideStyle = document.createElement('style');
-  hideStyle.textContent = [
-    '[class*=_content_63z57] { overflow:hidden !important; position:relative !important; }',
-  ].join('\n');
-  document.head.appendChild(hideStyle);
 
   var picker = null;
   function closePicker() { if (picker) { picker.remove(); picker = null; } }
@@ -160,35 +164,77 @@
       closePicker();
       var stationName = stationKey.split('|')[0];
 
-      // Optimistically remove from our UI immediately
+      // Optimistically update our UI
       delete state.assignments[stationKey];
       saveState();
+      render();
+      pauseObserver = true;
 
-      // Click Edit invisibly (overlay stays visible on top)
-      var editBtn = document.querySelector('[data-id="edit-button"][aria-label="Edit"]');
-      if (!editBtn) { render(); return; }
-      editBtn.click();
-
-      setTimeout(function() {
-        var nativeRow = Array.from(document.querySelectorAll('[class*=_link_1drg2]')).find(function(el) {
-          var n = el.querySelector('[class*=_title_1drg2]');
-          return n && n.innerText.trim() === stationName;
-        });
-        var favBtn = nativeRow ? nativeRow.querySelector('[data-accessory="favorite"]') : null;
-        if (favBtn) {
-          favBtn.click();
-          setTimeout(function() {
-            var doneBtn = document.querySelector('[data-id="edit-button"][aria-label="Done"]');
-            if (doneBtn) doneBtn.click();
-            // Re-render after native list updates
-            setTimeout(function() { render(); }, 200);
-          }, 200);
-        } else {
-          var doneBtn = document.querySelector('[data-id="edit-button"]');
-          if (doneBtn) doneBtn.click();
-          render();
+      function fireReactClick(el) {
+        var fk = Object.keys(el).find(function(k) { return k.startsWith('__reactFiber'); });
+        if (!fk) { el.click(); return; }
+        var f = el[fk];
+        while (f) {
+          if (f.memoizedProps && f.memoizedProps.onClick) {
+            f.memoizedProps.onClick({ type:'click', preventDefault:function(){}, stopPropagation:function(){} });
+            return;
+          }
+          f = f.return;
         }
-      }, 400);
+        el.click();
+      }
+
+      function tryRemoveFromPlayer() {
+        // Player bar heart: aria-label="remove X from favorites"
+        var heart = Array.from(document.querySelectorAll('[aria-label]')).find(function(el) {
+          var lbl = el.getAttribute('aria-label') || '';
+          return lbl === 'remove ' + stationName + ' from favorites';
+        });
+        if (!heart) return false;
+        fireReactClick(heart);
+        setTimeout(function() { pauseObserver = false; render(); }, 500);
+        return true;
+      }
+
+      function tryRemoveFromEditMode() {
+        // Edit mode hearts: aria-label="remove from favorites", find by matching row title
+        var hearts = Array.from(document.querySelectorAll('[data-accessory="favorite"]'));
+        var heart = hearts.find(function(h) {
+          // Walk up to find the row div, then look for title text
+          var el = h.parentElement;
+          while (el && !el.querySelector('[dir="auto"]')) el = el.parentElement;
+          if (!el) return false;
+          var title = el.querySelector('[dir="auto"]');
+          return title && title.innerText.trim() === stationName;
+        });
+        if (!heart) return false;
+        fireReactClick(heart);
+        // Exit edit mode
+        setTimeout(function() {
+          var doneBtn = document.querySelector('[data-id="edit-button"][aria-label="Done"]');
+          if (doneBtn) { doneBtn.style.display=''; fireReactClick(doneBtn); doneBtn.style.display='none'; }
+          setTimeout(function() { pauseObserver = false; render(); }, 300);
+        }, 300);
+        return true;
+      }
+
+      // Try player heart first (station already playing)
+      if (tryRemoveFromPlayer()) return;
+
+      // Enter edit mode
+      var editBtn = document.querySelector('[data-id="edit-button"]');
+      if (!editBtn) { pauseObserver = false; return; }
+      editBtn.style.display = '';
+      fireReactClick(editBtn);
+      editBtn.style.display = 'none';
+
+      // Poll for edit mode hearts
+      var attempts = 0;
+      var poll = setInterval(function() {
+        attempts++;
+        if (tryRemoveFromEditMode()) { clearInterval(poll); }
+        else if (attempts > 20) { clearInterval(poll); pauseObserver = false; }
+      }, 150);
     };
     picker.appendChild(removeItem);
 
@@ -211,7 +257,8 @@
   }
 
   function syncActiveHighlight(andScroll) {
-    var nameEl = document.querySelector('[class*=_title_b4zv2]');
+    var nowPlaying = document.querySelector('[aria-label^="Now Playing:"]');
+    var nameEl = nowPlaying ? nowPlaying.querySelector('[class*=_title][dir="auto"], [class*=_title_]') : null;
     if (!nameEl) return;
     var playingName = nameEl.innerText.trim();
     if (!playingName) {
@@ -337,9 +384,27 @@
     }, 0);
   }
 
+
+  function updateTitleBadge() {
+    var titleEl = document.querySelector('[id="bht"]');
+    if (!titleEl) return;
+    var count = getStations().length;
+    // Remove existing badge if any
+    var existing = titleEl.querySelector('.__fov-title-badge');
+    if (existing) existing.remove();
+    if (count > 0) {
+      var badge = document.createElement('span');
+      badge.className = '__fov-title-badge';
+      badge.textContent = ' (' + count + ')';
+      badge.style.cssText = 'font-size:0.75em; opacity:0.5; font-weight:400;';
+      titleEl.appendChild(badge);
+    }
+  }
+
   function render() {
     var ov = document.querySelector('.__fov');
     if (!ov) return;
+    ov.classList.toggle('compact', !!state.compact);
     var searchInput = ov.querySelector('.__fov-search'); // inside .__fov-search-wrap
     var filterText = searchInput ? searchInput.value.trim().toLowerCase() : '';
     var allStations = getStations();
@@ -401,12 +466,10 @@
           e.dataTransfer.setData('folder-drag', fid);
           e.stopPropagation();
           setTimeout(function() { folder.classList.add('folder-dragging'); }, 0);
-          freezeDrawer();
         };
         folder.ondragend = function() {
           folder.classList.remove('folder-dragging');
           document.querySelectorAll('.__fov-folder-drop-line').forEach(function(l) { l.remove(); });
-          setTimeout(thawDrawer, 100);
         };
         function clearDropLines() {
           document.querySelectorAll('.__fov-folder-drop-line').forEach(function(l) { l.remove(); });
@@ -570,8 +633,8 @@
         var lblText = document.createElement('span');
         lblText.textContent = 'All stations';
         var sortBtn = document.createElement('button');
-        var sortModes = ['manual','location','continent'];
-        var sortLabels = {'manual':'⊙ Sort','location':'⊙ By location','continent':'⊙ By continent'};
+        var sortModes = ['manual','name','location','continent'];
+        var sortLabels = {'manual':'⊙ Sort','name':'⊙ A–Z','location':'⊙ By location','continent':'⊙ By continent'};
         sortBtn.className = '__fov-sort-btn' + (state.sortMode !== 'manual' ? ' active' : '');
         sortBtn.textContent = sortLabels[state.sortMode] || '⊙ Sort';
         sortBtn.onclick = function(e) {
@@ -581,8 +644,27 @@
           saveState();
           render();
         };
+        var compactBtn = document.createElement('button');
+        compactBtn.className = '__fov-sort-btn' + (state.compact ? ' active' : '');
+        compactBtn.textContent = '▤';
+        compactBtn.title = 'Compact view';
+        compactBtn.onclick = function(e) {
+          e.stopPropagation();
+          state.compact = !state.compact;
+          saveState();
+          var ov = document.querySelector('.__fov');
+          if (ov) ov.classList.toggle('compact', state.compact);
+          compactBtn.className = '__fov-sort-btn' + (state.compact ? ' active' : '');
+          compactBtn.textContent = '▤';
+          compactBtn.title = state.compact ? 'Switch to normal view' : 'Switch to compact view';
+          compactBtn.textContent = '▤';
+        };
+        var btnGroup = document.createElement('div');
+        btnGroup.style.cssText = 'display:flex;gap:4px;';
+        btnGroup.appendChild(compactBtn);
+        btnGroup.appendChild(sortBtn);
         lbl.appendChild(lblText);
-        lbl.appendChild(sortBtn);
+        lbl.appendChild(btnGroup);
         sec.appendChild(lbl);
       }
       sec.ondragover = function(e) { e.preventDefault(); sec.classList.add('drag-over'); };
@@ -614,7 +696,17 @@
         }
         return 'Other';
       }
-      if (state.sortMode === 'location') {
+      // Helper: strip leading "Radio", "FM", "The" for sort key
+      function sortName(name) {
+        return name.replace(/^(radio|the|fm|am)\s+/i, '').trim().toLowerCase();
+      }
+
+      if (state.sortMode === 'name') {
+        displayUnassigned.sort(function(a, b) {
+          return sortName(a.name).localeCompare(sortName(b.name));
+        });
+        displayUnassigned.forEach(function(s) { sec.appendChild(makeRow(s, true)); });
+      } else if (state.sortMode === 'location') {
         displayUnassigned.sort(function(a, b) {
           var ac = getCountry(a.city), bc = getCountry(b.city);
           if (ac !== bc) return ac.localeCompare(bc);
@@ -647,6 +739,7 @@
     }
     // Reapply highlights after render (no scroll)
     setTimeout(function() { syncActiveHighlight(false); }, 50);
+    updateTitleBadge();
   }
 
   function makeRow(s, isUnassigned) {
@@ -687,12 +780,10 @@
       e.dataTransfer.setData('text/plain', s.key);
       dragKey = s.key;
       row.classList.add('dragging');
-      freezeDrawer();
     };
     row.ondragend = function() {
       row.classList.remove('dragging');
       dragKey = null;
-      setTimeout(thawDrawer, 100);
     };
     row.ondragover = function(e) {
       e.preventDefault(); e.stopPropagation();
@@ -880,7 +971,7 @@
 
     render();
     // Watch for station list changes (add/remove favorites)
-    var stationObserver = new MutationObserver(function() { render(); });
+    var stationObserver = new MutationObserver(function() { if (!pauseObserver) render(); });
     var stationsContainer = contentEl.querySelector('[class*=_hideFirstTop]');
     if (stationsContainer) stationObserver.observe(stationsContainer, { childList: true, subtree: true });
   }
@@ -890,7 +981,7 @@
     var href = window.location.href;
     if (href.includes('/favourites') || href.includes('/favorites')) return true;
     // Check nav active class - but NOT edit button (too unreliable during transitions)
-    var favNav = Array.from(document.querySelectorAll('[class*=_navItem], [class*=_tab], nav a, nav button'))
+    var favNav = Array.from(document.querySelectorAll('[class*=_navItem], [class*=_tab], [class*=_nav] a, [class*=_nav] button, nav a, nav button'))
       .find(function(el) { return el.innerText && el.innerText.trim().toLowerCase() === 'favorites'; });
     if (favNav) {
       return favNav.getAttribute('aria-selected') === 'true' ||
@@ -902,8 +993,13 @@
   function unmountOverlay() {
     delete document.body.dataset.fovMounted;
     closeColorPicker();
+    var titleEl = document.querySelector('[id="bht"]');
+    if (titleEl) { var b = titleEl.querySelector('.__fov-title-badge'); if (b) b.remove(); }
     var ov = document.querySelector('.__fov');
     if (ov) ov.remove();
+    // Restore overflow on content element
+    var contentEl = document.querySelector('[data-id="page-content"]');
+    if (contentEl) { contentEl.style.overflow = ''; contentEl.style.position = ''; }
     var editBtn = document.querySelector('[data-id="edit-button"]');
     if (editBtn) editBtn.style.display = '';
     document.querySelectorAll('.__fov-addfolder').forEach(function(b) { b.remove(); });
@@ -911,7 +1007,7 @@
   }
 
   function check() {
-    var contentEl = document.querySelector('[class*=_content_63z57]');
+    var contentEl = document.querySelector('[data-id="page-content"]');
     if (!contentEl) { unmountOverlay(); return; }
     if (isFavoritesActive() && getStations().length > 0) {
       var alreadyMounted = !!contentEl.querySelector('.__fov');
@@ -957,6 +1053,7 @@
 
     // Click listener with slightly longer delay to let routing settle
     document.addEventListener('click', function() {
+      if (pauseObserver) return;
       setTimeout(onNavigate, 250);
     });
 
