@@ -4,13 +4,49 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: check
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            MSG="${{ github.event.head_commit.message }}"
+            if [[ $MSG =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+              VERSION=$(echo "$MSG" | grep -oE '^v[0-9]+\.[0-9]+\.[0-9]+')
+              echo "Detected version $VERSION in commit message"
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+                echo "Creating tag $VERSION"
+                git tag "$VERSION"
+                git push origin "$VERSION" || echo "Tag already exists on remote"
+              else
+                echo "Tag $VERSION already exists"
+              fi
+              echo "should_release=true" >> $GITHUB_OUTPUT
+            else
+              echo "should_release=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
   build-windows:
+    needs: prepare
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +54,8 @@ jobs:
         with:
           node-version: 18
       - run: npm install
-      - run: npm run dist -- --win
+      - name: Build and Publish
+        run: npm run dist -- --win ${{ needs.prepare.outputs.should_release == 'true' && '--publish always' || '--publish never' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
@@ -27,6 +64,7 @@ jobs:
           path: dist/*.exe
 
   build-linux:
+    needs: prepare
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +72,8 @@ jobs:
         with:
           node-version: 18
       - run: npm install
-      - run: npm run dist -- --linux
+      - name: Build and Publish
+        run: npm run dist -- --linux ${{ needs.prepare.outputs.should_release == 'true' && '--publish always' || '--publish never' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
