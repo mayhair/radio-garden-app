@@ -27,8 +27,8 @@ jobs:
             echo "should_release=true" >> $GITHUB_OUTPUT
           else
             MSG="${{ github.event.head_commit.message }}"
-            if [[ $MSG =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-              VERSION=$(echo "$MSG" | grep -oE '^v[0-9]+\.[0-9]+\.[0-9]+')
+            if [[ $MSG =~ ^v[0-9]+(\.[0-9]+)+ ]]; then
+              VERSION=$(echo "$MSG" | grep -oE '^v[0-9]+(\.[0-9]+)+')
               echo "Detected version $VERSION in commit message"
               git config user.name "github-actions[bot]"
               git config user.email "github-actions[bot]@users.noreply.github.com"

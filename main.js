@@ -15,7 +15,11 @@ let promptWin = null;
 let discordClient = null;
 let discordReady = false;
 let discordEnabled = true;
-let lastStation = null;
+let lastTrayTooltip = '';
+let lastWindowTitle = '';
+let lastSleepTimerText = '';
+let lastDiscordStation = '';
+let lastDiscordCity = '';
 
 const configPath = path.join(app.getPath('userData'), 'window-state.json');
 
@@ -86,7 +90,7 @@ function setSleepTimer(minutes) {
   sleepCountdownInterval = setInterval(function() {
     updateTrayMenu();
   }, 30000);
-  updateTrayMenu();
+  updateTrayMenu(true);
 }
 
 function promptCustomSleepTimer() {
@@ -364,6 +368,11 @@ function clearDiscord() {
 
 function updateDiscord(station, city) {
   if (!discordReady || !discordClient || !discordEnabled) return;
+  if (station === lastDiscordStation && city === lastDiscordCity) return;
+  
+  lastDiscordStation = station;
+  lastDiscordCity = city;
+  
   try {
     discordClient.setActivity({
       details: station || 'Browsing...',
@@ -400,21 +409,37 @@ function pollDiscordStation() {
     ).then(function(result) {
       if (result && result.name) {
         updateDiscord(result.name, result.city);
-        mainWindow.setTitle(result.name + (result.city ? '  —  ' + result.city : ''));
-        tray.setToolTip(result.name + (result.city ? ' — ' + result.city : ''));
+        var newTitle = result.name + (result.city ? '  —  ' + result.city : '');
+        var newTooltip = result.name + (result.city ? ' — ' + result.city : '');
+        
+        if (newTitle !== lastWindowTitle) {
+          mainWindow.setTitle(newTitle);
+          lastWindowTitle = newTitle;
+        }
+        if (newTooltip !== lastTrayTooltip) {
+          tray.setToolTip(newTooltip);
+          lastTrayTooltip = newTooltip;
+        }
+
         if (!result.city || result.city.toLowerCase().indexOf('loading') === -1) {
           if (result.playing) recordListening(result.city, result.name);
           var entry = result.name + (result.city ? ' — ' + result.city : '');
           if (stationHistory[0] !== entry) {
             stationHistory = [entry].concat(stationHistory.filter(function(s) { return s !== entry; })).slice(0, 5);
             try { fs.writeFileSync(path.join(app.getPath('userData'), 'station-history.json'), JSON.stringify(stationHistory)); } catch(e) { console.error('history save error:', e); }
-            updateTrayMenu();
+            updateTrayMenu(true);
           }
         }
       } else {
         updateDiscord('Browsing...', null);
-        mainWindow.setTitle('Radio Garden');
-        tray.setToolTip('Radio Garden');
+        if (lastWindowTitle !== 'Radio Garden') {
+          mainWindow.setTitle('Radio Garden');
+          lastWindowTitle = 'Radio Garden';
+        }
+        if (lastTrayTooltip !== 'Radio Garden') {
+          tray.setToolTip('Radio Garden');
+          lastTrayTooltip = 'Radio Garden';
+        }
       }
     }).catch(function() {});
   }, 2000);
@@ -651,7 +676,17 @@ ipcMain.handle('folders-save', function(e, data) { saveFolders(data); return tru
 
 // ── Tray Menu ─────────────────────────────────────────────────────────────────
 
-function updateTrayMenu() {
+function updateTrayMenu(force) {
+  var sleepText = (function() {
+    if (!sleepTimer || !sleepTimerEnd) return 'Sleep Timer';
+    var msLeft = sleepTimerEnd - Date.now();
+    var minsLeft = Math.max(1, Math.ceil(msLeft / 60000));
+    return 'Sleep Timer: ' + minsLeft + ' min left';
+  }());
+
+  if (!force && sleepText === lastSleepTimerText) return;
+  lastSleepTimerText = sleepText;
+
   var sleepItems = [5, 15, 30, 60, 90].map(function(min) {
     return { label: min + ' minutes', click: function() { setSleepTimer(min); } };
   });
@@ -671,14 +706,9 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
-      label: (function() {
-        if (!sleepTimer || !sleepTimerEnd) return 'Sleep Timer';
-        var msLeft = sleepTimerEnd - Date.now();
-        var minsLeft = Math.max(1, Math.ceil(msLeft / 60000));
-        return 'Sleep Timer: ' + minsLeft + ' min left';
-      }()),
+      label: sleepText,
       submenu: sleepTimer
-        ? [{ label: 'Cancel Sleep Timer', click: function() { clearSleepTimer(); updateTrayMenu(); } }]
+        ? [{ label: 'Cancel Sleep Timer', click: function() { clearSleepTimer(); updateTrayMenu(true); } }]
         : sleepItems
     },
     {
@@ -691,7 +721,7 @@ function updateTrayMenu() {
           click: function() {
             alwaysOnTop = !alwaysOnTop;
             mainWindow.setAlwaysOnTop(alwaysOnTop);
-            updateTrayMenu();
+            updateTrayMenu(true);
           }
         },
         {
@@ -701,7 +731,7 @@ function updateTrayMenu() {
           click: function() {
             discordEnabled = !discordEnabled;
             if (!discordEnabled) clearDiscord();
-            updateTrayMenu();
+            updateTrayMenu(true);
           }
         },
         {
@@ -711,7 +741,7 @@ function updateTrayMenu() {
           click: function() {
             var current = app.getLoginItemSettings().openAtLogin;
             app.setLoginItemSettings({ openAtLogin: !current });
-            updateTrayMenu();
+            updateTrayMenu(true);
           }
         }
       ]
@@ -919,7 +949,9 @@ app.whenReady().then(function() {
 
   tray = new Tray(trayIconPath);
   tray.setToolTip('Radio Garden');
-  updateTrayMenu();
+  lastTrayTooltip = 'Radio Garden';
+  lastWindowTitle = 'Radio Garden';
+  updateTrayMenu(true);
 
   tray.on('click', function() {
     if (mainWindow.isVisible()) {
