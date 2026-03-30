@@ -45,6 +45,7 @@
       "icon.png",
       "package.json",
       "!**/*.map",
+      "!**/README.md",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
       "!**/node_modules/*/{test,tests,tests.js,test.js}"
     ],
